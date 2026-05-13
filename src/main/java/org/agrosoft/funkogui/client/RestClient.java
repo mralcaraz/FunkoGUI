@@ -3,7 +3,12 @@ package org.agrosoft.funkogui.client;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
-import okhttp3.*;
+import okhttp3.HttpUrl;
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
 import org.agrosoft.funkogui.gui.utils.ConfigManager;
 
 import java.io.InputStream;
@@ -171,6 +176,49 @@ public class RestClient {
                 }
             }
         }
+        return result;
+    }
+
+    public boolean postVoidCall(String url, Object bodyObj) {
+        int attempt = 0;
+        log.info("POST (void) calling [{}]", url);
+        boolean result = false;
+
+        while (attempt < this.maxRetries && !result) {
+            attempt++;
+            try {
+                String jsonBody = this.mapper.writeValueAsString(bodyObj);
+                RequestBody requestBody = RequestBody.create(
+                        jsonBody,
+                        MediaType.get("application/json; charset=utf-8")
+                );
+
+                Request request = new Request.Builder()
+                        .url(url)
+                        .post(requestBody)
+                        .build();
+
+                try (Response response = client.newCall(request).execute()) {
+                    if (response.isSuccessful() || response.code() == 204) {
+                        log.info("Successful POST (void) [{}] - code {}", url, response.code());
+                        result = true;
+                    } else if (response.code() == 400) {
+                        log.error("Bad request POST [{}]: {}", url, response.message());
+                    } else {
+                        log.warn("Server error POST [{}]: {} {}", url, response.code(), response.message());
+                    }
+                }
+
+            } catch (Exception e) {
+                log.warn("Failed <{}> attempt POST (void) [{}]", attempt, url, e);
+                if (attempt < this.maxRetries) {
+                    try {
+                        Thread.sleep(2500L * attempt);
+                    } catch (InterruptedException ignore) {}
+                }
+            }
+        }
+
         return result;
     }
 }

@@ -1,21 +1,27 @@
 package org.agrosoft.funkogui.gui.windows;
 
-import javax.swing.*;
-import javax.swing.border.EmptyBorder;
-import javax.swing.filechooser.FileNameExtensionFilter;
-import javax.swing.table.DefaultTableModel;
-import javax.swing.table.TableRowSorter;
-
 import com.intellij.uiDesigner.core.GridConstraints;
 import com.intellij.uiDesigner.core.GridLayoutManager;
 import com.intellij.uiDesigner.core.Spacer;
 import lombok.extern.slf4j.Slf4j;
+import org.agrosoft.funkogui.client.ApiClient;
 import org.agrosoft.funkogui.client.FunkoClient;
 import org.agrosoft.funkogui.client.RestClient;
 import org.agrosoft.funkogui.gui.utils.FormUtils;
 import org.agrosoft.funkogui.model.FunkoDto;
 
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
+import javax.swing.filechooser.FileNameExtensionFilter;
+import javax.swing.table.DefaultTableModel;
+import javax.swing.table.TableRowSorter;
 import java.awt.*;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
+import java.awt.event.KeyAdapter;
+import java.awt.event.KeyEvent;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.util.Comparator;
@@ -26,8 +32,14 @@ import java.util.Optional;
 @Slf4j
 public class MainWindow extends JFrame {
 
+    private static final String PLACEHOLDER = "Busca por Línea, Descripción o Tipo";
+
     private final JFrame thisReference;
     private FunkoClient client;
+    private ApiClient apliClient;
+    private TableRowSorter<DefaultTableModel> sorter;
+    private boolean firstRun;
+    private Timer searchTimer;
 
     private JPanel contentPane;
     private JScrollPane scrollPane;
@@ -37,10 +49,14 @@ public class MainWindow extends JFrame {
     private JButton btnSalir;
     private JLabel lblTotal;
     private JButton btnExportar;
+    private JTextField txtFiltro;
 
     public MainWindow() {
         log.info("Starting MainWindow");
-        this.client = new FunkoClient(new RestClient());
+        this.firstRun = true;//avoid null sorter and force llenaFunkos first call
+        RestClient restClient = new RestClient();
+        this.client = new FunkoClient(restClient);
+        this.apliClient = new ApiClient(restClient);
         this.thisReference = this;
         this.setTitle("Administrador de Funkos");
         this.setSize(1300, 700);
@@ -49,11 +65,21 @@ public class MainWindow extends JFrame {
         FormUtils.centrarVentanaEnPantalla(this);
         this.contentPane.setBorder(new EmptyBorder(5, 5, 5, 5));
         this.setContentPane(contentPane);
+        this.llenaFunkos();
+        this.agregarBusqueda();
+        this.txtFiltro.setText(PLACEHOLDER);
+        this.txtFiltro.setForeground(Color.GRAY);
 
-        this.btnSalir.addActionListener(actionEvent -> System.exit(0));
+        this.btnSalir.addActionListener(actionEvent -> this.exitApplication());
         this.btnAgregar.addActionListener(actionEvent -> this.openAgregarFunko());
         this.btnEditar.addActionListener(actionEvent -> this.openEditarFunko());
         this.btnExportar.addActionListener(actionEvent -> this.exportarAExcel());
+    }
+
+    private void exitApplication() {
+        log.info("Exit appication in progress");
+        this.apliClient.shutdownBackend();
+        this.dispose();
     }
 
     private void exportarAExcel() {
@@ -184,27 +210,98 @@ public class MainWindow extends JFrame {
         this.tblFunkos.setModel(dtm);
         this.tblFunkos.removeColumn(this.tblFunkos.getColumnModel().getColumn(7));
         this.lblTotal.setText("Total: " + dtm.getRowCount() + " funkos");
-
-        TableRowSorter<DefaultTableModel> sorter = new TableRowSorter<>(dtm);
-        this.tblFunkos.setRowSorter(sorter);
+        this.sorter = new TableRowSorter<>(dtm);
+        this.tblFunkos.setRowSorter(this.sorter);
         FormUtils.redimensionarTabla(this.tblFunkos);
+        this.tblFunkos.getTableHeader().setReorderingAllowed(false);
+    }
+
+    private void agregarBusqueda() {
+        log.info("Configuring search box");
+        this.txtFiltro.getDocument().addDocumentListener(new DocumentListener() {
+            @Override
+            public void insertUpdate(DocumentEvent e) {
+                debounce();
+            }
+
+            @Override
+            public void removeUpdate(DocumentEvent e) {
+                debounce();
+            }
+
+            @Override
+            public void changedUpdate(DocumentEvent e) {
+                debounce();
+            }
+        });
+
+        this.txtFiltro.addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusGained(FocusEvent e) {
+                if (txtFiltro.getText().equals(PLACEHOLDER)) {
+                    txtFiltro.setText("");
+                    txtFiltro.setForeground(Color.WHITE);
+                }
+            }
+            @Override
+            public void focusLost(FocusEvent e) {
+                if (txtFiltro.getText().isBlank()) {
+                    txtFiltro.setText(PLACEHOLDER);
+                    txtFiltro.setForeground(Color.GRAY);
+                }
+            }
+        });
+
+        //evitar alerta de backspace cuando el campo está vacío
+        this.txtFiltro.addKeyListener(new KeyAdapter() {
+            @Override
+            public void keyPressed(KeyEvent e) {
+                if (e.getKeyCode() == KeyEvent.VK_BACK_SPACE) {
+                    if (!txtFiltro.getText().isEmpty()) {
+                        txtFiltro.setText("");
+                    }
+                    e.consume();
+                }
+            }
+        });
+
+        //Configurar timer
+        this.searchTimer = new Timer(500, e -> filterTable());
+        this.searchTimer.setRepeats(false);
+    }
+
+    private void debounce() {
+        if (this.searchTimer.isRunning()) {
+            this.searchTimer.restart();
+        } else {
+            this.searchTimer.start();
+        }
+    }
+
+    private void filterTable() {
+        String text = txtFiltro.getText().trim();
+        if (text.isEmpty() || text.equals(PLACEHOLDER)) {
+            this.sorter.setRowFilter(null);
+        } else {
+            this.sorter.setRowFilter(RowFilter.regexFilter("(?i)" + text, 0, 1, 5));
+        }
     }
 
     private List<FunkoDto> fetchFunkos() {
         List<FunkoDto> queryResult = this.client.getAll();
         queryResult = (Objects.isNull(queryResult)) ? List.of() : queryResult.stream()
-                .sorted(
-                        Comparator.comparing(FunkoDto::getLinea)
-                                .thenComparing(FunkoDto::getDescripcion)
-                                .thenComparingInt(FunkoDto::getNumero)
-                )
-                .toList();
+                                                                  .sorted(
+                                                                          Comparator.comparing(FunkoDto::getLinea)
+                                                                          .thenComparing(FunkoDto::getDescripcion)
+                                                                          .thenComparingInt(FunkoDto::getNumero)
+                                                                  )
+                                                                  .toList();
         return queryResult;
     }
 
     @Override
     public void setVisible(boolean visible) {
-        if (visible) {
+        if (visible && !this.firstRun) {
             this.llenaFunkos();
         }
         super.setVisible(visible);
@@ -226,7 +323,7 @@ public class MainWindow extends JFrame {
      */
     private void $$$setupUI$$$() {
         contentPane = new JPanel();
-        contentPane.setLayout(new GridLayoutManager(10, 5, new Insets(0, 0, 0, 0), -1, -1));
+        contentPane.setLayout(new GridLayoutManager(12, 5, new Insets(0, 0, 0, 0), -1, -1));
         final Spacer spacer1 = new Spacer();
         contentPane.add(spacer1, new GridConstraints(1, 0, 7, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_WANT_GROW, 1, null, null, null, 0, false));
         final Spacer spacer2 = new Spacer();
@@ -246,7 +343,7 @@ public class MainWindow extends JFrame {
         btnSalir.setText("Salir");
         contentPane.add(btnSalir, new GridConstraints(6, 3, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, GridConstraints.SIZEPOLICY_FIXED, null, null, null, 0, false));
         final Spacer spacer3 = new Spacer();
-        contentPane.add(spacer3, new GridConstraints(9, 0, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_VERTICAL, 1, GridConstraints.SIZEPOLICY_WANT_GROW, null, null, null, 0, false));
+        contentPane.add(spacer3, new GridConstraints(11, 0, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_VERTICAL, 1, GridConstraints.SIZEPOLICY_WANT_GROW, new Dimension(20, 20), null, null, 0, false));
         final Spacer spacer4 = new Spacer();
         contentPane.add(spacer4, new GridConstraints(0, 2, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_WANT_GROW, 1, null, null, null, 0, false));
         final Spacer spacer5 = new Spacer();
@@ -257,10 +354,14 @@ public class MainWindow extends JFrame {
         contentPane.add(spacer7, new GridConstraints(0, 4, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_WANT_GROW, 1, null, null, null, 0, false));
         lblTotal = new JLabel();
         lblTotal.setText("Label");
-        contentPane.add(lblTotal, new GridConstraints(8, 1, 1, 1, GridConstraints.ANCHOR_WEST, GridConstraints.FILL_NONE, GridConstraints.SIZEPOLICY_FIXED, GridConstraints.SIZEPOLICY_FIXED, null, null, null, 0, false));
+        contentPane.add(lblTotal, new GridConstraints(10, 1, 1, 1, GridConstraints.ANCHOR_WEST, GridConstraints.FILL_NONE, GridConstraints.SIZEPOLICY_FIXED, GridConstraints.SIZEPOLICY_FIXED, null, null, null, 0, false));
         btnExportar = new JButton();
         btnExportar.setText("Exportar");
         contentPane.add(btnExportar, new GridConstraints(4, 3, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, GridConstraints.SIZEPOLICY_FIXED, null, null, null, 0, false));
+        txtFiltro = new JTextField();
+        contentPane.add(txtFiltro, new GridConstraints(8, 1, 1, 1, GridConstraints.ANCHOR_WEST, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_WANT_GROW, GridConstraints.SIZEPOLICY_FIXED, null, new Dimension(150, -1), null, 0, false));
+        final Spacer spacer8 = new Spacer();
+        contentPane.add(spacer8, new GridConstraints(9, 1, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_VERTICAL, 1, GridConstraints.SIZEPOLICY_WANT_GROW, new Dimension(20, 20), null, null, 0, false));
     }
 
     /**
