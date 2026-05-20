@@ -4,6 +4,8 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.Properties;
 
 @Slf4j
@@ -16,7 +18,7 @@ public class ConfigManager {
             if (input == null) {
                 log.error("No se encontró el archivo config.properties en resources.");
             } else {
-                properties.load(input);
+                properties.load(new InputStreamReader(input, StandardCharsets.UTF_8));
                 log.info("Archivo config.properties cargado correctamente.");
             }
         } catch (IOException e) {
