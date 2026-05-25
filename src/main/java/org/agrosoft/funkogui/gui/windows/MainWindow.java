@@ -40,6 +40,7 @@ public class MainWindow extends JFrame {
     private TableRowSorter<DefaultTableModel> sorter;
     private boolean firstRun;
     private Timer searchTimer;
+    private Timer firstRunTimer;
 
     private JPanel contentPane;
     private JScrollPane scrollPane;
@@ -74,6 +75,15 @@ public class MainWindow extends JFrame {
         this.btnAgregar.addActionListener(actionEvent -> this.openAgregarFunko());
         this.btnEditar.addActionListener(actionEvent -> this.openEditarFunko());
         this.btnExportar.addActionListener(actionEvent -> this.exportarAExcel());
+        this.setFirstRun();
+    }
+
+    private void setFirstRun() {
+        this.firstRunTimer = new Timer(500, e -> {
+            firstRun = false;
+        });
+        this.firstRunTimer.setRepeats(false);
+        this.firstRunTimer.start();
     }
 
     private void exitApplication() {
